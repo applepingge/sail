@@ -54,6 +54,8 @@ open Ast_util
 
 val opt_smt_verbose : bool ref
 
+val set_solver : string -> unit
+
 type smt_result = Unknown | Sat | Unsat
 
 val load_digests : unit -> unit

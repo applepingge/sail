@@ -64,7 +64,7 @@ let opt_print_c = ref false
 let opt_print_latex = ref false
 let opt_print_coq = ref false
 let opt_print_cgen = ref false
-let opt_memo_z3 = ref true
+let opt_memo_z3 = ref false
 let opt_sanity = ref false
 let opt_includes_c = ref ([]:string list)
 let opt_libs_lem = ref ([]:string list)
@@ -112,6 +112,9 @@ let options = Arg.align ([
   ( "-ocaml_generators",
     Arg.String (fun s -> opt_ocaml_generators := s::!opt_ocaml_generators),
     "<types> produce random generators for the given types");
+  ( "-smt_solver",
+    Arg.String (fun s -> Constraint.set_solver (String.trim s)),
+    "<solver> choose SMT solver. Supports solvers are z3 (default), cvc4, mathsat and yices.");
   ( "-latex",
     Arg.Tuple [Arg.Set opt_print_latex; Arg.Clear Type_check.opt_expand_valspec ],
     " pretty print the input to LaTeX");

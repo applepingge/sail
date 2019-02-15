@@ -55,6 +55,67 @@ open Util
 
 let opt_smt_verbose = ref false
 
+type solver = {
+    command : string;
+    header : string;
+    footer : string;
+    negative_literals : bool;
+    uninterpret_power : bool
+  }
+
+let cvc4_solver = {
+    command = "cvc4 -L smtlib2 --tlimit=2000";
+    header = "(set-logic QF_UFNIA)\n";
+    footer = "";
+    negative_literals = false;
+    uninterpret_power = true
+  }
+
+let mathsat_solver = {
+    command = "mathsat";
+    header = "(set-logic QF_UFLIA)\n";
+    footer = "";
+    negative_literals = false;
+    uninterpret_power = true
+  }
+
+let z3_solver = {
+    command = "z3 -t:1000 -T:10";
+    (* Using push and pop is much faster, I believe because
+       incremental mode uses a different solver. *)
+    header = "(push)\n";
+    footer = "(pop)\n";
+    negative_literals = true;
+    uninterpret_power = false;
+  }
+
+let yices_solver = {
+    command = "yices-smt2 --timeout=2";
+    header = "(set-logic QF_UFLIA)\n";
+    footer = "";
+    negative_literals = false;
+    uninterpret_power = true
+  }
+
+let vampire_solver = {
+    (* vampire sometimes likes to ignore its time limit *)
+    command = "timeout -s SIGKILL 3s vampire --time_limit 2s --input_syntax smtlib2 --mode smtcomp";
+    header = "";
+    footer = "";
+    negative_literals = false;
+    uninterpret_power = true
+  }
+              
+let opt_solver = ref vampire_solver
+
+let set_solver = function
+  | "z3" -> opt_solver := z3_solver
+  | "mathsat" -> opt_solver := mathsat_solver
+  | "cvc4" -> opt_solver := cvc4_solver
+  | "yices" -> opt_solver := yices_solver
+  | "vampire" -> opt_solver := vampire_solver
+  | unknown -> prerr_endline ("Unrecognised SMT solver " ^ unknown)
+               
 (* SMTLIB v2.0 format is based on S-expressions so we have a
    lightweight representation of those here. *)
 type sexpr = List of (sexpr list) | Atom of string
@@ -101,6 +162,9 @@ let to_smt l vars constr =
     match aux with
     | Nexp_id id -> Atom (Util.zencode_string (string_of_id id))
     | Nexp_var v -> smt_var v
+    | Nexp_constant c
+         when Big_int.less_equal c (Big_int.of_int (-1)) && not !opt_solver.negative_literals ->
+       sfun "-" [Atom "0"; Atom (Big_int.to_string (Big_int.abs c))]
     | Nexp_constant c -> Atom (Big_int.to_string c)
     | Nexp_app (id, nexps) -> sfun (string_of_id id) (List.map smt_nexp nexps)
     | Nexp_times (nexp1, nexp2) -> sfun "*" [smt_nexp nexp1; smt_nexp nexp2]
@@ -137,12 +201,13 @@ let to_smt l vars constr =
 
 let smtlib_of_constraints ?get_model:(get_model=false) l vars constr : string * (kid -> sexpr) =
   let variables, problem, var_map = to_smt l vars constr in
-  "(push)\n"
+  !opt_solver.header
   ^ variables ^ "\n"
+  ^ (if !opt_solver.uninterpret_power then "(declare-fun ^ (Int Int) Int)\n" else "")
   ^ pp_sexpr (sfun "define-fun" [Atom "constraint"; List []; Atom "Bool"; problem])
   ^ "\n(assert constraint)\n(check-sat)"
-  ^ (if get_model then "\n(get-model)" else "")
-  ^ "\n(pop)",
+  ^ (if get_model then "\n(get-model)\n" else "\n")
+  ^ !opt_solver.footer,
   var_map
 
 type smt_result = Unknown | Sat | Unsat
@@ -217,8 +282,11 @@ let call_z3' l vars constraints : smt_result =
       close_out tmp_chan;
       let z3_output =
         try
-          let z3_chan = Unix.open_process_in ("z3 -t:1000 -T:10 " ^ input_file) in
-          let z3_output = List.combine problems (input_lines z3_chan (List.length problems)) in
+          let z3_chan = Unix.open_process_in (!opt_solver.command ^ " " ^ input_file) in
+          let z3_output =
+            try List.combine problems (input_lines z3_chan (List.length problems)) with
+            | End_of_file -> List.combine problems ["unknown"]
+          in
           let _ = Unix.close_process_in z3_chan in
           z3_output
         with
